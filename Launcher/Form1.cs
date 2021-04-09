@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -9,7 +10,10 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using CCWin;
 using Microsoft.Win32;
@@ -27,7 +31,7 @@ namespace Launcher
         
         private void Form1_Load(object sender, EventArgs e)
         {
-
+            CheckUpdate();
         }
 
         private void pictureBox1_MouseEnter(object sender, EventArgs e)
@@ -60,6 +64,18 @@ namespace Launcher
             this.WindowState = FormWindowState.Minimized;
         }
 
+        private void pictureBox3_MouseEnter(object sender, EventArgs e)
+        {
+            if (!start)
+                this.pictureBox3.Image = global::Launcher.Properties.Resources.btnStart_up;
+        }
+
+        private void pictureBox3_MouseLeave(object sender, EventArgs e)
+        {
+            if (!start)
+                this.pictureBox3.Image = global::Launcher.Properties.Resources.btnStart_dn;
+        }
+
         private void pictureBox3_Click(object sender, EventArgs e)
         {
             string fileName = "";
@@ -78,7 +94,7 @@ namespace Launcher
             
             if (File.Exists(fileName))
             {
-                string ServerIP = getIP("sw.byxiaoxie.com");
+                string ServerIP = getIP("byxiaoxie.com");
                 //RunCmd(fileName, "IP:" + ServerIP + " PORT:10000 MultiExecuteClient:yes SkipWMModule:yes");
                 RunCmd_Test(fileName, ServerIP);
                 Application.Exit();
@@ -90,16 +106,44 @@ namespace Launcher
             }
         }
 
-        private void pictureBox3_MouseEnter(object sender, EventArgs e)
+        private void CheckUpdate()
         {
-            if(!start)
-                this.pictureBox3.Image = global::Launcher.Properties.Resources.btnStart_up;
-        }
+            if (progressBarEx1.Value == 0)
+            {
+                //测试用记得删除 Start
+                try
+                {
+                    uint crc = crc32.Crc32.GetFileCRC32(@"D:\Personal\Desktop\SoulWorker\SoulWorker\SoulWorker100.exe");
+                    string crchex = crc.ToString("X8");
+                    MessageBox.Show(crchex); //test
+                    return; 
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.ToString());
+                }
+                //测试用记得删除 End
 
-        private void pictureBox3_MouseLeave(object sender, EventArgs e)
-        {
-            if (!start)
-                this.pictureBox3.Image = global::Launcher.Properties.Resources.btnStart_dn;
+                pictureBox3.Enabled = false;
+                pictureBox3.Image = Properties.Resources.btnStart_disable;
+                label1.Text = "Checking for updates...";
+                string htmldata = getHtml("http://127.0.0.1:666/sw.json");
+                DataTable jsondata = JsonToDataTable(htmldata);
+                if (jsondata.Rows[0]["version"].ToString() != "1.1")
+                {
+                    Sleep(3000);
+                    string MyDir = System.AppDomain.CurrentDomain.BaseDirectory;
+                    DownloadFile(jsondata.Rows[0]["download"].ToString(), MyDir + "Test.zip", progressBarEx1, label1);
+                }
+                else 
+                {
+                    progressBarEx1.Value = 100;
+                    label1.Text = "Latest Version...";
+                    pictureBox3.Enabled = true;
+                    pictureBox3.Image = Properties.Resources.btnStart_dn;
+                }
+                
+            }
         }
 
         /// <summary>
@@ -201,6 +245,211 @@ namespace Launcher
                 value = (string)rk.GetValue(paramName, null);
             }
             return value;
+        }
+
+        /// <summary>
+        /// 延迟
+        /// </summary>
+        /// <param name="m">毫秒</param>
+        public static void Sleep(int m)
+        {
+            DateTime current = DateTime.Now;
+            while (current.AddMilliseconds(m) > DateTime.Now)
+            {
+                Application.DoEvents();
+            }
+            return;
+        }
+
+        /// <summary>        
+        /// 下载文件        
+        /// </summary>        
+        /// <param name="URL">下载文件地址</param>       
+        /// <param name="Filename">存放位置</param>        
+        /// <param name="Prog">进度条</param>        
+        /// 
+        public void DownloadFile(string URL, string filename, ProgressBarEx prog, Label label1)
+        {
+            float percent = 0;
+            try
+            {
+                HttpWebRequest Myrq = (HttpWebRequest)HttpWebRequest.Create(URL);
+                HttpWebResponse myrp = (HttpWebResponse)Myrq.GetResponse();
+                long totalBytes = myrp.ContentLength;
+                if (prog != null)
+                {
+                    prog.Maximum = (int)totalBytes;
+                }
+                Stream st = myrp.GetResponseStream();
+                Stream so = new FileStream(filename, FileMode.Create);
+                long totalDownloadedByte = 0;
+                byte[] by = new byte[1024];
+                int osize = st.Read(by, 0, (int)by.Length);
+                while (osize > 0)
+                {
+                    totalDownloadedByte = osize + totalDownloadedByte;
+                    Application.DoEvents();
+                    so.Write(by, 0, osize);
+                    if (prog != null)
+                    {
+                        prog.Value = (int)totalDownloadedByte;
+                    }
+                    osize = st.Read(by, 0, (int)by.Length);
+
+                    percent = (float)totalDownloadedByte / (float)totalBytes * 100;
+                    label1.Text = "Download:" + Math.Round(percent, 2).ToString() + "%   ";
+                    Application.DoEvents();
+                }
+                so.Close();
+                st.Close();
+                if (!WinrarCheck())
+                {
+                    MessageBox.Show("WinRAR未安装,无法执行解压!", "Launcher");
+                    return;
+                }
+                else {
+                    string MyDir = System.AppDomain.CurrentDomain.BaseDirectory;
+                    string retDir = UnRAR(MyDir, "", "Test.zip");
+                    if (retDir == "") 
+                    {
+                        MessageBox.Show("解压失败.", "Launcher");
+                        return;
+                    }
+                }
+                if (progressBarEx1.Value == progressBarEx1.Maximum)
+                {
+                    label1.Text = "Download complete...";
+                    pictureBox3.Enabled = true;
+                    pictureBox3.Image = Properties.Resources.btnStart_dn;
+                }
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Winrar是否存在
+        /// </summary>
+        /// <returns></returns>
+        static public bool WinrarCheck()
+        {
+            RegistryKey the_Reg = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\WinRAR.exe");
+            return !string.IsNullOrEmpty(the_Reg.GetValue("").ToString());
+        }
+
+        /// <summary>
+        /// 调用Winrar解压
+        /// </summary>
+        /// <param name="UnPatch">解压路径</param>
+        /// <param name="Patch">压缩包路径</param>
+        /// <param name="Name">压缩包名称</param>
+        /// <returns></returns>
+        public string UnRAR(string UnPatch, string Patch, string Name)
+        {
+            string the_rar;
+            RegistryKey the_Reg;
+            object the_Obj;
+            string the_Info;
+
+            try
+            {
+                the_Reg = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\WinRAR.exe");
+                the_Obj = the_Reg.GetValue("");
+                the_rar = the_Obj.ToString();
+                the_Reg.Close();
+
+                if (Directory.Exists(UnPatch) == false)
+                {
+                    Directory.CreateDirectory(UnPatch);
+                }
+                the_Info = "x " + Name + " " + UnPatch + " -y" + " -ibck";
+
+                ProcessStartInfo the_StartInfo = new ProcessStartInfo();
+                the_StartInfo.FileName = the_rar;
+                the_StartInfo.Arguments = the_Info;
+                the_StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                the_StartInfo.WorkingDirectory = Patch;
+
+                Process the_Process = new Process();
+                the_Process.StartInfo = the_StartInfo;
+                the_Process.Start();
+                the_Process.WaitForExit();
+                the_Process.Close();
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+            return UnPatch;
+        }
+
+        /// <summary>
+        /// 获取网站Json用
+        /// </summary>
+        /// <param name="html">URL</param>
+        /// <returns></returns>
+        public string getHtml(string html)
+        {
+            string pageHtml = "";
+            WebClient MyWebClient = new WebClient();
+            MyWebClient.Credentials = CredentialCache.DefaultCredentials;
+            Byte[] pageData = MyWebClient.DownloadData(html);
+            MemoryStream ms = new MemoryStream(pageData);
+            using (StreamReader sr = new StreamReader(ms, Encoding.GetEncoding("GB2312")))
+            {
+                pageHtml = sr.ReadLine();
+            }
+            return pageHtml;
+        }
+
+        /// <summary>
+        /// Json 转换 DataTable
+        /// </summary>
+        /// <param name="json"></param>
+        /// <returns></returns>
+        public static DataTable JsonToDataTable(string json)
+        {
+            DataTable dataTable = new DataTable();  //实例化
+            DataTable result;
+            try
+            {
+                JavaScriptSerializer javaScriptSerializer = new JavaScriptSerializer();
+                javaScriptSerializer.MaxJsonLength = Int32.MaxValue; //取得最大数值
+                ArrayList arrayList = javaScriptSerializer.Deserialize<ArrayList>(json);
+                if (arrayList.Count > 0)
+                {
+                    foreach (Dictionary<string, object> dictionary in arrayList)
+                    {
+                        if (dictionary.Keys.Count<string>() == 0)
+                        {
+                            result = dataTable;
+                            return result;
+                        }
+                        //Columns
+                        if (dataTable.Columns.Count == 0)
+                        {
+                            foreach (string current in dictionary.Keys)
+                            {
+                                dataTable.Columns.Add(current, dictionary[current].GetType());
+                            }
+                        }
+                        //Rows
+                        DataRow dataRow = dataTable.NewRow();
+                        foreach (string current in dictionary.Keys)
+                        {
+                            dataRow[current] = dictionary[current];
+                        }
+                        dataTable.Rows.Add(dataRow);
+                    }
+                }
+            }
+            catch
+            {
+            }
+            result = dataTable;
+            return result;
         }
     }
 }
